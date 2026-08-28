@@ -1,7 +1,6 @@
 <!DOCTYPE html>
 <html lang="en" dir="ltr">
 <head>
-     <meta name="google-site-verification" content="s378Z2dgmMelB2gizhsP-UWEVijt557stt8gW5PRfbU" />
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CCTV Installation in Arar & Riyadh | Advanced CCTV Services</title>
@@ -175,6 +174,8 @@
   .form-status{font-size:.85rem;margin-top:12px;color:var(--text-muted);}
   .form-status.ok{color:var(--green);}
   .form-status.err{color:var(--red);}
+  #photoPreview img{max-width:140px;border-radius:8px;margin-top:10px;display:block;border:1px solid var(--line);}
+  .review-photo{width:100%;border-radius:8px;margin-bottom:14px;display:block;max-height:220px;object-fit:cover;}
 
   .trust{background:var(--bg-panel-2);border-top:1px solid var(--line);border-bottom:1px solid var(--line);}
   .trust-list{max-width:720px;display:flex;flex-direction:column;gap:0;}
@@ -412,6 +413,11 @@
           <label for="rText">Your Review</label>
           <textarea id="rText" maxlength="500" required></textarea>
         </div>
+        <div class="form-field" style="margin-bottom:16px;">
+          <label for="rPhoto">Add a Photo of the Work (optional)</label>
+          <input id="rPhoto" type="file" accept="image/*" style="padding:8px 0;color:var(--text-muted);">
+          <div id="photoPreview"></div>
+        </div>
         <button type="submit" class="btn btn-primary">Submit Review</button>
         <div id="formStatus" class="form-status"></div>
       </form>
@@ -484,6 +490,37 @@
     return div.innerHTML;
   }
 
+  function compressImage(file, maxWidth=640, quality=0.6){
+    return new Promise((resolve, reject)=>{
+      const reader = new FileReader();
+      reader.onload = (e)=>{
+        const img = new Image();
+        img.onload = ()=>{
+          let w = img.width, h = img.height;
+          if(w > maxWidth){ h = Math.round(h * (maxWidth / w)); w = maxWidth; }
+          const canvas = document.createElement('canvas');
+          canvas.width = w; canvas.height = h;
+          canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        };
+        img.onerror = reject;
+        img.src = e.target.result;
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  document.getElementById('rPhoto').addEventListener('change', function(){
+    const preview = document.getElementById('photoPreview');
+    preview.innerHTML = '';
+    if(this.files && this.files[0]){
+      const img = document.createElement('img');
+      img.src = URL.createObjectURL(this.files[0]);
+      preview.appendChild(img);
+    }
+  });
+
   async function loadReviews(){
     const grid = document.getElementById('reviewsGrid');
     try{
@@ -498,9 +535,10 @@
         const r = docSnap.data();
         const rating = Math.min(5, Math.max(1, parseInt(r.rating) || 5));
         const stars = "★".repeat(rating) + "☆".repeat(5 - rating);
+        const photoHtml = r.photo ? `<img class="review-photo" src="${r.photo}" alt="Customer photo">` : '';
         const card = document.createElement('div');
         card.className = 'review-card';
-        card.innerHTML = `<div class="stars">${stars}</div><p>"${escapeHtml(r.text || "")}"</p><div class="review-author">${escapeHtml(r.name || "Customer")} <span>${escapeHtml(r.location || "Arar")}</span></div>`;
+        card.innerHTML = `${photoHtml}<div class="stars">${stars}</div><p>"${escapeHtml(r.text || "")}"</p><div class="review-author">${escapeHtml(r.name || "Customer")} <span>${escapeHtml(r.location || "Arar")}</span></div>`;
         grid.appendChild(card);
       });
     }catch(err){
@@ -520,9 +558,27 @@
     if(!name || !text){ return; }
     btn.disabled = true; btn.textContent = "Submitting...";
     statusEl.textContent = ""; statusEl.className = "form-status";
+
+    let photoData = null;
+    const photoInput = document.getElementById('rPhoto');
+    if(photoInput.files && photoInput.files[0]){
+      try{
+        photoData = await compressImage(photoInput.files[0]);
+        if(photoData.length > 900000){
+          statusEl.textContent = "Photo is too large — please choose a smaller one.";
+          statusEl.className = "form-status err";
+          btn.disabled = false; btn.textContent = "Submit Review";
+          return;
+        }
+      }catch(err){ console.error(err); }
+    }
+
     try{
-      await addDoc(collection(db, "reviews"), { name, location, rating, text, timestamp: serverTimestamp() });
+      const docData = { name, location, rating, text, timestamp: serverTimestamp() };
+      if(photoData) docData.photo = photoData;
+      await addDoc(collection(db, "reviews"), docData);
       e.target.reset();
+      document.getElementById('photoPreview').innerHTML = '';
       statusEl.textContent = "Thank you! Your review has been posted.";
       statusEl.className = "form-status ok";
       await loadReviews();
